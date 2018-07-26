@@ -10,6 +10,9 @@ import numpy.random as random
 from .fused_types cimport floating
 from . import vector_fields as vf
 
+from cython.parallel import prange
+cimport openmp
+
 from dipy.align.vector_fields cimport(_apply_affine_3d_x0,
                                       _apply_affine_3d_x1,
                                       _apply_affine_3d_x2,
@@ -705,24 +708,25 @@ cdef _compute_pdfs_dense_3d(double[:, :, :] static, double[:, :, :] moving,
         cnp.npy_intp nslices = static.shape[0]
         cnp.npy_intp nrows = static.shape[1]
         cnp.npy_intp ncols = static.shape[2]
-        cnp.npy_intp offset, valid_points
+        cnp.npy_intp offset, valid_points, *valid_points_ptr = &valid_points
         cnp.npy_intp k, i, j, r, c
         double rn, cn
-        double val, spline_arg, sum
+        double val, spline_arg, sum, *sum_ptr = &sum
+        openmp.omp_lock_t lock
 
     joint[...] = 0
     sum = 0
     with nogil:
         valid_points = 0
         smarginal[:] = 0
-        for k in range(nslices):
+        openmp.omp_init_lock(&lock)
+        for k in prange(nslices, schedule='guided'):
             for i in range(nrows):
                 for j in range(ncols):
                     if smask is not None and smask[k, i, j] == 0:
                         continue
                     if mmask is not None and mmask[k, i, j] == 0:
                         continue
-                    valid_points += 1
                     rn = _bin_normalize(static[k, i, j], smin, sdelta)
                     r = _bin_index(rn, nbins, padding)
                     cn = _bin_normalize(moving[k, i, j], mmin, mdelta)
@@ -730,11 +734,15 @@ cdef _compute_pdfs_dense_3d(double[:, :, :] static, double[:, :, :] moving,
                     spline_arg = (c - 2) - cn
 
                     smarginal[r] += 1
+                    openmp.omp_set_lock(&lock)
+                    valid_points_ptr[0] = valid_points_ptr[0] + 1
                     for offset in range(-2, 3):
                         val = _cubic_spline(spline_arg)
                         joint[r, c + offset] += val
-                        sum += val
-                        spline_arg += 1.0
+                        sum_ptr[0] = sum_ptr[0] + val
+                        spline_arg = spline_arg + 1.0
+                    openmp.omp_unset_lock(&lock)
+        openmp.omp_destroy_lock(&lock)
 
         if sum > 0:
             for i in range(nbins):
