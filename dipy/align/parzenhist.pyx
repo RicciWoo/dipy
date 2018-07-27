@@ -721,12 +721,14 @@ cdef _compute_pdfs_dense_3d(double[:, :, :] static, double[:, :, :] moving,
         smarginal[:] = 0
         openmp.omp_init_lock(&lock)
         for k in prange(nslices, schedule='guided'):
+            openmp.omp_set_lock(&lock)
             for i in range(nrows):
                 for j in range(ncols):
                     if smask is not None and smask[k, i, j] == 0:
                         continue
                     if mmask is not None and mmask[k, i, j] == 0:
                         continue
+                    valid_points_ptr[0] = valid_points_ptr[0] + 1
                     rn = _bin_normalize(static[k, i, j], smin, sdelta)
                     r = _bin_index(rn, nbins, padding)
                     cn = _bin_normalize(moving[k, i, j], mmin, mdelta)
@@ -734,14 +736,12 @@ cdef _compute_pdfs_dense_3d(double[:, :, :] static, double[:, :, :] moving,
                     spline_arg = (c - 2) - cn
 
                     smarginal[r] += 1
-                    openmp.omp_set_lock(&lock)
-                    valid_points_ptr[0] = valid_points_ptr[0] + 1
                     for offset in range(-2, 3):
                         val = _cubic_spline(spline_arg)
                         joint[r, c + offset] += val
                         sum_ptr[0] = sum_ptr[0] + val
                         spline_arg = spline_arg + 1.0
-                    openmp.omp_unset_lock(&lock)
+            openmp.omp_unset_lock(&lock)
         openmp.omp_destroy_lock(&lock)
 
         if sum > 0:
