@@ -11,6 +11,7 @@ from .fused_types cimport floating
 from . import vector_fields as vf
 
 from cython.parallel import prange
+cimport openmp
 
 from dipy.align.vector_fields cimport(_apply_affine_3d_x0,
                                       _apply_affine_3d_x1,
@@ -667,22 +668,20 @@ cdef void _compute_pdfs_dense_3d_fun(double[:, :, :] static, double[:, :, :] mov
                             double mmin, double mdelta,
                             int nbins, int padding, double[:, :] joint,
                             double[:] smarginal, double[:] mmarginal,
-                            cnp.npy_intp k, long[:] valid_points_buf,
-                            double[:] sum_buf) nogil:
+                            cnp.npy_intp k, cnp.npy_intp *valid_points_ptr,
+                            double *sum_ptr) nogil:
     cdef:
         cnp.npy_intp nrows = static.shape[1]
         cnp.npy_intp ncols = static.shape[2]
         cnp.npy_intp offset, i, j, r, c
         double rn, cn, val, spline_arg
-    valid_points_buf[k] = 0
-    sum_buf[k] = 0
     for i in range(nrows):
         for j in range(ncols):
             if smask is not None and smask[k, i, j] == 0:
                 continue
             if mmask is not None and mmask[k, i, j] == 0:
                 continue
-            valid_points_buf[k] += 1
+            valid_points_ptr[0] += 1
             rn = _bin_normalize(static[k, i, j], smin, sdelta)
             r = _bin_index(rn, nbins, padding)
             cn = _bin_normalize(moving[k, i, j], mmin, mdelta)
@@ -693,7 +692,7 @@ cdef void _compute_pdfs_dense_3d_fun(double[:, :, :] static, double[:, :, :] mov
             for offset in range(-2, 3):
                 val = _cubic_spline(spline_arg)
                 joint[r, c + offset] += val
-                sum_buf[k] += val
+                sum_ptr[0] += val
                 spline_arg += 1.0
 
 
@@ -741,24 +740,22 @@ cdef _compute_pdfs_dense_3d(double[:, :, :] static, double[:, :, :] moving,
     '''
     cdef:
         cnp.npy_intp nslices = static.shape[0]
-        cnp.npy_intp valid_points, k, i, j, kk
-        double sum
-        long[:] valid_points_buf = np.empty(shape=(nslices,), dtype=np.long)
-        double[:] sum_buf = np.empty(shape=(nslices,), dtype=np.float64)
-
+        cnp.npy_intp k, i, j, valid_points, *valid_points_ptr = &valid_points
+        double sum, *sum_ptr = &sum
+        openmp.omp_lock_t lock
     joint[...] = 0
+    sum = 0
     with nogil:
+        valid_points = 0
         smarginal[:] = 0
+        openmp.omp_init_lock(&lock)
         for k in prange(nslices, schedule='guided'):
+            openmp.omp_set_lock(&lock)
             _compute_pdfs_dense_3d_fun(static, moving, smask, mmask,
                             smin, sdelta, mmin, mdelta, nbins, padding, joint,
-                            smarginal, mmarginal, k, valid_points_buf, sum_buf)
-
-        valid_points = 0
-        sum = 0
-        for kk in range(nslices):
-            valid_points += valid_points_buf[kk]
-            sum += sum_buf[kk]
+                            smarginal, mmarginal, k, valid_points_ptr, sum_ptr)
+            openmp.omp_unset_lock(&lock)
+        openmp.omp_destroy_lock(&lock)
 
         if sum > 0:
             for i in range(nbins):
