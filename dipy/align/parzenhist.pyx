@@ -12,6 +12,7 @@ from . import vector_fields as vf
 
 from cython.parallel import prange
 from libc.stdlib cimport abort, malloc, free
+cimport openmp
 
 from dipy.align.vector_fields cimport(_apply_affine_3d_x0,
                                       _apply_affine_3d_x1,
@@ -942,7 +943,7 @@ cdef void _joint_pdf_gradient_dense_3d_fun(double[:] theta, Transform transform,
                             int[:, :, :] smask, int[:, :, :] mmask, double smin,
                             double sdelta, double mmin, double mdelta, int nbins,
                             int padding, double[:, :, :] grad_pdf, cnp.npy_intp k,
-                            long[:] valid_points_ptr) nogil:
+                            cnp.npy_intp *valid_points_ptr) nogil:
     cdef:
         cnp.npy_intp nrows = static.shape[1]
         cnp.npy_intp ncols = static.shape[2]
@@ -952,8 +953,6 @@ cdef void _joint_pdf_gradient_dense_3d_fun(double[:] theta, Transform transform,
         cnp.npy_intp l, i, j, r, c
         double rn, cn, *J, *prod, x[3]
         double val, spline_arg
-
-    valid_points_ptr[k] = 0
     J = <double *>malloc(sizeof(double) * 3 * n)
     if J == NULL:
         abort()
@@ -966,7 +965,7 @@ cdef void _joint_pdf_gradient_dense_3d_fun(double[:] theta, Transform transform,
                 continue
             if mmask is not None and mmask[k, i, j] == 0:
                 continue
-            valid_points_ptr[k] = valid_points_ptr[k] + 1
+            valid_points_ptr[0] += 1
             x[0] = _apply_affine_3d_x0(k, i, j, 1, grid2world)
             x[1] = _apply_affine_3d_x1(k, i, j, 1, grid2world)
             x[2] = _apply_affine_3d_x2(k, i, j, 1, grid2world)
@@ -1054,22 +1053,22 @@ cdef _joint_pdf_gradient_dense_3d(double[:] theta, Transform transform,
     cdef:
         cnp.npy_intp nslices = static.shape[0]
         cnp.npy_intp n = theta.shape[0]
-        cnp.npy_intp valid_points
+        cnp.npy_intp valid_points, *valid_points_ptr = &valid_points
         cnp.npy_intp i, j, k
         double norm_factor
-        long[:] valid_points_ptr = np.empty(shape=(nslices,), dtype=long)
-
+        openmp.omp_lock_t lock
     grad_pdf[...] = 0
     with nogil:
+        valid_points = 0
+        openmp.omp_init_lock(&lock)
         for k in prange(nslices, schedule='guided'):
+            openmp.omp_set_lock(&lock)
             _joint_pdf_gradient_dense_3d_fun(theta, transform, static, moving,
                                     grid2world, mgradient, smask, mmask, smin,
                                     sdelta, mmin, mdelta, nbins, padding,
                                     grad_pdf, k, valid_points_ptr)
-
-        valid_points = 0
-        for k in range(nslices):
-            valid_points = valid_points + valid_points_ptr[k]
+            openmp.omp_unset_lock(&lock)
+        openmp.omp_destroy_lock(&lock)
 
         norm_factor = valid_points * mdelta
         if norm_factor > 0:
