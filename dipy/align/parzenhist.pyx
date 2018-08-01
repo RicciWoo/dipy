@@ -12,7 +12,8 @@ from . import vector_fields as vf
 
 from cython.parallel import prange
 from libc.stdlib cimport abort, malloc, free
-cimport openmp
+cimport safe_openmp as openmp
+from safe_openmp cimport have_openmp
 
 from dipy.align.vector_fields cimport(_apply_affine_3d_x0,
                                       _apply_affine_3d_x1,
@@ -251,7 +252,8 @@ class ParzenJointHistogram(object):
                                       self.smarginal, self.mmarginal)
 
     def update_gradient_dense(self, theta, transform, static, moving,
-                              grid2world, mgradient, smask=None, mmask=None):
+                              grid2world, mgradient, smask=None, mmask=None,
+                              num_threads=None):
         r''' Computes the Gradient of the joint PDF w.r.t. transform parameters
 
         Computes the vector of partial derivatives of the joint histogram
@@ -293,6 +295,9 @@ class ParzenJointHistogram(object):
             mask of moving object being registered (a binary array with 1's
             inside the object of interest and 0's along the background).
             The default is None, indicating all voxels are considered.
+        num_threads : int
+            Number of threads. If None (default) then all available threads
+            will be used.
         '''
         if static.shape != moving.shape:
             raise ValueError("Images must have the same shape")
@@ -332,12 +337,12 @@ class ParzenJointHistogram(object):
                 _joint_pdf_gradient_dense_3d[cython.double](theta, transform,
                     static, moving, grid2world, mgradient, smask, mmask,
                     self.smin, self.sdelta, self.mmin, self.mdelta,
-                    self.nbins, self.padding, self.joint_grad)
+                    self.nbins, self.padding, self.joint_grad, num_threads)
             elif mgradient.dtype == np.float32:
                 _joint_pdf_gradient_dense_3d[cython.float](theta, transform,
                     static, moving, grid2world, mgradient, smask, mmask,
                     self.smin, self.sdelta, self.mmin, self.mdelta,
-                    self.nbins, self.padding, self.joint_grad)
+                    self.nbins, self.padding, self.joint_grad, num_threads)
             else:
                 raise ValueError('Grad. field dtype must be floating point')
 
@@ -1003,7 +1008,7 @@ cdef _joint_pdf_gradient_dense_3d(double[:] theta, Transform transform,
                                   int[:, :, :] mmask, double smin,
                                   double sdelta, double mmin, double mdelta,
                                   int nbins, int padding,
-                                  double[:, :, :] grad_pdf):
+                                  double[:, :, :] grad_pdf, num_threads=None):
     r''' Gradient of the joint PDF w.r.t. transform parameters theta
 
     Computes the vector of partial derivatives of the joint histogram w.r.t.
@@ -1049,6 +1054,9 @@ cdef _joint_pdf_gradient_dense_3d(double[:] theta, Transform transform,
         sides of the histogram is actually 2*padding)
     grad_pdf : array, shape (nbins, nbins, len(theta))
         the array to write the gradient to
+    num_threads : int
+        Number of threads. If None (default) then all available threads
+        will be used.
     '''
     cdef:
         cnp.npy_intp nslices = static.shape[0]
@@ -1057,18 +1065,34 @@ cdef _joint_pdf_gradient_dense_3d(double[:] theta, Transform transform,
         cnp.npy_intp i, j, k
         double norm_factor
         openmp.omp_lock_t lock
+        int all_cores = openmp.omp_get_num_procs()
+        int threads_to_use = -1
+
+    if num_threads is not None:
+        threads_to_use = num_threads
+    else:
+        threads_to_use = all_cores
+
+    if have_openmp:
+        openmp.omp_set_dynamic(0)
+        openmp.omp_set_num_threads(threads_to_use)
+
     grad_pdf[...] = 0
     with nogil:
         valid_points = 0
-        openmp.omp_init_lock(&lock)
+        if have_openmp:
+            openmp.omp_init_lock(&lock)
         for k in prange(nslices, schedule='guided'):
-            openmp.omp_set_lock(&lock)
+            if have_openmp:
+                openmp.omp_set_lock(&lock)
             _joint_pdf_gradient_dense_3d_fun(theta, transform, static, moving,
                                     grid2world, mgradient, smask, mmask, smin,
                                     sdelta, mmin, mdelta, nbins, padding,
                                     grad_pdf, k, valid_points_ptr)
-            openmp.omp_unset_lock(&lock)
-        openmp.omp_destroy_lock(&lock)
+            if have_openmp:
+                openmp.omp_unset_lock(&lock)
+        if have_openmp:
+            openmp.omp_destroy_lock(&lock)
 
         norm_factor = valid_points * mdelta
         if norm_factor > 0:
@@ -1076,6 +1100,9 @@ cdef _joint_pdf_gradient_dense_3d(double[:] theta, Transform transform,
                 for j in range(nbins):
                     for k in range(n):
                         grad_pdf[i, j, k] /= norm_factor
+
+    if have_openmp and num_threads is not None:
+        openmp.omp_set_num_threads(all_cores)
 
 
 cdef _joint_pdf_gradient_sparse_2d(double[:] theta, Transform transform,
