@@ -29,7 +29,7 @@ cdef extern from "dpy_math.h" nogil:
     double log(double)
 
 class ParzenJointHistogram(object):
-    def __init__(self, nbins):
+    def __init__(self, nbins, num_threads=None):
         r""" Computes joint histogram and derivatives with Parzen windows
 
         Base class to compute joint and marginal probability density
@@ -50,6 +50,9 @@ class ParzenJointHistogram(object):
         nbins : int
             the number of bins of the joint and marginal probability density
             functions (the actual number of bins of the joint PDF is nbins**2)
+        num_threads : int
+            Number of threads. If None (default) then all available threads
+            will be used.
 
         References
         ----------
@@ -82,6 +85,7 @@ class ParzenJointHistogram(object):
         # side) we need a padding of 2, in the case of cubic splines.
         self.padding = 2
         self.setup_called = False
+        self.num_threads = num_threads
 
     def setup(self, static, moving, smask=None, mmask=None):
         r""" Compute histogram settings to store the PDF of input images
@@ -252,8 +256,7 @@ class ParzenJointHistogram(object):
                                       self.smarginal, self.mmarginal)
 
     def update_gradient_dense(self, theta, transform, static, moving,
-                              grid2world, mgradient, smask=None, mmask=None,
-                              num_threads=None):
+                              grid2world, mgradient, smask=None, mmask=None):
         r''' Computes the Gradient of the joint PDF w.r.t. transform parameters
 
         Computes the vector of partial derivatives of the joint histogram
@@ -337,12 +340,12 @@ class ParzenJointHistogram(object):
                 _joint_pdf_gradient_dense_3d[cython.double](theta, transform,
                     static, moving, grid2world, mgradient, smask, mmask,
                     self.smin, self.sdelta, self.mmin, self.mdelta,
-                    self.nbins, self.padding, self.joint_grad, num_threads)
+                    self.nbins, self.padding, self.joint_grad, self.num_threads)
             elif mgradient.dtype == np.float32:
                 _joint_pdf_gradient_dense_3d[cython.float](theta, transform,
                     static, moving, grid2world, mgradient, smask, mmask,
                     self.smin, self.sdelta, self.mmin, self.mdelta,
-                    self.nbins, self.padding, self.joint_grad, num_threads)
+                    self.nbins, self.padding, self.joint_grad, self.num_threads)
             else:
                 raise ValueError('Grad. field dtype must be floating point')
 

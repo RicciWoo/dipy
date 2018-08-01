@@ -474,7 +474,7 @@ class MutualInformationMetric(object):
         coordinates. When using dense sampling, this random displacement is
         not applied.
         """
-        self.histogram = ParzenJointHistogram(nbins)
+        self.histogram = ParzenJointHistogram(nbins, num_threads)
         self.sampling_proportion = sampling_proportion
         self.metric_val = None
         self.metric_grad = None
@@ -665,7 +665,7 @@ class MutualInformationMetric(object):
                     static_values,
                     moving_values,
                     static2prealigned,
-                    mgrad, self.num_threads)
+                    mgrad)
             else:  # Sparse case
                 # Compute the gradient of moving at the sampling points
                 # which are already given in physical space coordinates
