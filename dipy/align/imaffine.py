@@ -440,7 +440,7 @@ class AffineMap(object):
 
 class MutualInformationMetric(object):
 
-    def __init__(self, nbins=32, sampling_proportion=None):
+    def __init__(self, nbins=32, sampling_proportion=None, num_threads=None):
         r""" Initializes an instance of the Mutual Information metric
 
         This class implements the methods required by Optimizer to drive the
@@ -460,6 +460,9 @@ class MutualInformationMetric(object):
             then sparse sampling is used, where `sampling_proportion`
             specifies the proportion of voxels to be used. The default is
             None.
+        num_threads : int
+            Number of threads. If None (default) then all available threads
+            will be used.
 
         Notes
         -----
@@ -475,6 +478,7 @@ class MutualInformationMetric(object):
         self.sampling_proportion = sampling_proportion
         self.metric_val = None
         self.metric_grad = None
+        self.num_threads = num_threads
 
     def setup(self, transform, static, moving, static_grid2world=None,
               moving_grid2world=None, starting_affine=None):
@@ -594,7 +598,8 @@ class MutualInformationMetric(object):
         if self.sampling_proportion is None:  # Dense case
             static_values = self.static
             moving_values = self.affine_map.transform(self.moving)
-            self.histogram.update_pdfs_dense(static_values, moving_values)
+            self.histogram.update_pdfs_dense(static_values, moving_values,
+                                             self.num_threads)
         else:  # Sparse case
             sp_to_moving = self.moving_world2grid.dot(self.affine_map.affine)
             pts = sp_to_moving.dot(self.samples.T).T  # Points on moving grid

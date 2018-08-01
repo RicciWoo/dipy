@@ -11,7 +11,8 @@ from .fused_types cimport floating
 from . import vector_fields as vf
 
 from cython.parallel import prange
-cimport openmp
+cimport safe_openmp as openmp
+from safe_openmp cimport have_openmp
 
 from dipy.align.vector_fields cimport(_apply_affine_3d_x0,
                                       _apply_affine_3d_x1,
@@ -177,7 +178,8 @@ class ParzenJointHistogram(object):
         """
         return _bin_index(xnorm, self.nbins, self.padding)
 
-    def update_pdfs_dense(self, static, moving, smask=None, mmask=None):
+    def update_pdfs_dense(self, static, moving, smask=None, mmask=None,
+                          num_threads=None):
         r''' Computes the Probability Density Functions of two images
 
         The joint PDF is stored in self.joint. The marginal distributions
@@ -198,6 +200,9 @@ class ParzenJointHistogram(object):
             mask of moving object being registered (a binary array with 1's
             inside the object of interest and 0's along the background).
             If None, ones_like(moving) is used as mask.
+        num_threads : int
+            Number of threads. If None (default) then all available threads
+            will be used.
         '''
         if static.shape != moving.shape:
             raise ValueError("Images must have the same shape")
@@ -218,7 +223,7 @@ class ParzenJointHistogram(object):
             _compute_pdfs_dense_3d(static, moving, smask, mmask, self.smin,
                                    self.sdelta, self.mmin, self.mdelta,
                                    self.nbins, self.padding, self.joint,
-                                   self.smarginal, self.mmarginal)
+                                   self.smarginal, self.mmarginal, num_threads)
 
     def update_pdfs_sparse(self, sval, mval):
         r''' Computes the Probability Density Functions from a set of samples
@@ -697,11 +702,10 @@ cdef void _compute_pdfs_dense_3d_fun(double[:, :, :] static, double[:, :, :] mov
 
 
 cdef _compute_pdfs_dense_3d(double[:, :, :] static, double[:, :, :] moving,
-                            int[:, :, :] smask, int[:, :, :] mmask,
-                            double smin, double sdelta,
-                            double mmin, double mdelta,
-                            int nbins, int padding, double[:, :] joint,
-                            double[:] smarginal, double[:] mmarginal):
+                            int[:, :, :] smask, int[:, :, :] mmask, double smin,
+                            double sdelta, double mmin, double mdelta, int nbins,
+                            int padding, double[:, :] joint, double[:] smarginal,
+                            double[:] mmarginal, num_threads=None):
     r''' Joint Probability Density Function of intensities of two 3D images
 
     Parameters
@@ -737,25 +741,44 @@ cdef _compute_pdfs_dense_3d(double[:, :, :] static, double[:, :, :] moving,
         the array to write the marginal PDF associated with the static image
     mmarginal : array, shape (nbins,)
         the array to write the marginal PDF associated with the moving image
+    num_threads : int
+        Number of threads. If None (default) then all available threads
+        will be used.
     '''
     cdef:
         cnp.npy_intp nslices = static.shape[0]
         cnp.npy_intp k, i, j, valid_points, *valid_points_ptr = &valid_points
         double sum, *sum_ptr = &sum
         openmp.omp_lock_t lock
+        int all_cores = openmp.omp_get_num_procs()
+        int threads_to_use = -1
+
+    if num_threads is not None:
+        threads_to_use = num_threads
+    else:
+        threads_to_use = all_cores
+
+    if have_openmp:
+        openmp.omp_set_dynamic(0)
+        openmp.omp_set_num_threads(threads_to_use)
+
     joint[...] = 0
     sum = 0
     with nogil:
         valid_points = 0
         smarginal[:] = 0
-        openmp.omp_init_lock(&lock)
+        if have_openmp:
+            openmp.omp_init_lock(&lock)
         for k in prange(nslices, schedule='guided'):
-            openmp.omp_set_lock(&lock)
+            if have_openmp:
+                openmp.omp_set_lock(&lock)
             _compute_pdfs_dense_3d_fun(static, moving, smask, mmask,
                             smin, sdelta, mmin, mdelta, nbins, padding, joint,
                             smarginal, mmarginal, k, valid_points_ptr, sum_ptr)
-            openmp.omp_unset_lock(&lock)
-        openmp.omp_destroy_lock(&lock)
+            if have_openmp:
+                openmp.omp_unset_lock(&lock)
+        if have_openmp:
+            openmp.omp_destroy_lock(&lock)
 
         if sum > 0:
             for i in range(nbins):
@@ -769,6 +792,9 @@ cdef _compute_pdfs_dense_3d(double[:, :, :] static, double[:, :, :] moving,
                 mmarginal[j] = 0
                 for i in range(nbins):
                     mmarginal[j] += joint[i, j]
+
+    if have_openmp and num_threads is not None:
+        openmp.omp_set_num_threads(all_cores)
 
 
 cdef _compute_pdfs_sparse(double[:] sval, double[:] mval, double smin,
