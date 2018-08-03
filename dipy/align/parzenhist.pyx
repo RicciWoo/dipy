@@ -1064,7 +1064,7 @@ cdef _joint_pdf_gradient_dense_3d(double[:] theta, Transform transform,
         if valid_points_ptr == NULL:
             abort()
         
-        for k in prange(nslices, schedule='guided'):
+        for k in prange(nslices, schedule='dynamic'):
             _joint_pdf_gradient_dense_3d_fun(theta, transform, static, moving,
                                     grid2world, mgradient, smask, mmask, smin,
                                     sdelta, mmin, mdelta, nbins, padding,
