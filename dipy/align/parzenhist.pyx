@@ -954,7 +954,6 @@ cdef void _joint_pdf_gradient_dense_3d_fun(double[:] theta, Transform transform,
         cnp.npy_intp l, i, j, r, c
         double rn, cn, *J, *prod, x[3]
         double val, spline_arg
-        openmp.omp_lock_t lock
 
     valid_points_ptr[k] = 0
     J = <double *>malloc(sizeof(double) * 3 * n)
@@ -964,9 +963,6 @@ cdef void _joint_pdf_gradient_dense_3d_fun(double[:] theta, Transform transform,
     if prod == NULL:
         abort()
 
-    if have_openmp:
-        openmp.omp_init_lock(&lock)
-    
     for i in range(nrows):
         for j in range(ncols):
             if smask is not None and smask[k, i, j] == 0:
@@ -992,20 +988,11 @@ cdef void _joint_pdf_gradient_dense_3d_fun(double[:] theta, Transform transform,
             c = _bin_index(cn, nbins, padding)
             spline_arg = (c - 2) - cn
 
-            if have_openmp:
-                openmp.omp_set_lock(&lock)
-
             for offset in range(-2, 3):
                 val = _cubic_spline_derivative(spline_arg)
                 for l in range(n):
                     grad_pdf[r, c + offset, l] -= val * prod[l]
                 spline_arg += 1.0
-
-            if have_openmp:
-                openmp.omp_unset_lock(&lock)
-
-    if have_openmp:
-        openmp.omp_destroy_lock(&lock)
 
     free(J)
     free(prod)
@@ -1080,7 +1067,7 @@ cdef _joint_pdf_gradient_dense_3d(double[:] theta, Transform transform,
         if valid_points_ptr == NULL:
             abort()
 
-        for k in prange(nslices, schedule='dynamic'):
+        for k in prange(nslices, schedule='guided'):
             _joint_pdf_gradient_dense_3d_fun(theta, transform, static, moving,
                                     grid2world, mgradient, smask, mmask, smin,
                                     sdelta, mmin, mdelta, nbins, padding,
