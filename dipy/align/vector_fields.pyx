@@ -3163,7 +3163,7 @@ cdef void _gradient_3d(floating[:, :, :] img, double[:, :] img_world2grid,
     h[0] = 0.5 * img_spacing[0]
     h[1] = 0.5 * img_spacing[1]
     h[2] = 0.5 * img_spacing[2]
-    for k in range(nslices):
+    for k in prange(nslices):
         _gradient_3d_fun(img, img_world2grid, img_spacing, out_grid2world,
                          out, inside, h, k)
 
