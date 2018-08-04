@@ -1013,9 +1013,9 @@ cdef void _joint_pdf_gradient_dense_3d(double[:] theta, Transform transform,
     for k in range(nslices):
         for i in range(nrows):
             for j in range(ncols):
-                if smask is not None and smask[k, i, j] == 0:
+                if smask[k, i, j] == 0:
                     continue
-                if mmask is not None and mmask[k, i, j] == 0:
+                if mmask[k, i, j] == 0:
                     continue
                 valid_points += 1
                 x[0] = _apply_affine_3d_x0(k, i, j, 1, grid2world)
