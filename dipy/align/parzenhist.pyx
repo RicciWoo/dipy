@@ -1026,9 +1026,9 @@ cdef void _joint_pdf_gradient_dense_3d(double[:] theta, Transform transform,
                     constant_jacobian = transform._jacobian_c(theta, x, J)
 
                 for l in range(n):
-                    prod[l] = (J[0, l] * mgradient[k, i, j, 0] +
-                               J[1, l] * mgradient[k, i, j, 1] +
-                               J[2, l] * mgradient[k, i, j, 2])
+                    prod[l] = (J[0 * n + l] * mgradient[k, i, j, 0] +
+                               J[1 * n + l] * mgradient[k, i, j, 1] +
+                               J[2 * n + l] * mgradient[k, i, j, 2])
 
                 rn = _bin_normalize(static[k, i, j], smin, sdelta)
                 r = _bin_index(rn, nbins, padding)
