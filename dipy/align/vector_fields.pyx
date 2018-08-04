@@ -3063,9 +3063,9 @@ def create_sphere(cnp.npy_intp nslices, cnp.npy_intp nrows,
     return np.asarray(s)
 
 
-def _gradient_3d(floating[:, :, :] img, double[:, :] img_world2grid,
+cdef void _gradient_3d(floating[:, :, :] img, double[:, :] img_world2grid,
                  double[:] img_spacing, double[:, :] out_grid2world,
-                 floating[:, :, :, :] out, int[:, :, :] inside):
+                 floating[:, :, :, :] out, int[:, :, :] inside) nogil:
     r""" Gradient of a 3D image in physical space coordinates
 
     Each grid cell (i, j, k) in the sampling grid (determined by
@@ -3104,59 +3104,56 @@ def _gradient_3d(floating[:, :, :] img, double[:, :] img_world2grid,
         int nslices = out.shape[0]
         int nrows = out.shape[1]
         int ncols = out.shape[2]
-        int i, j, k, in_flag
-        double tmp
-        double[:] x = np.empty(shape=(3,), dtype=np.float64)
-        double[:] dx = np.empty(shape=(3,), dtype=np.float64)
-        double[:] h = np.empty(shape=(3,), dtype=np.float64)
-        double[:] q = np.empty(shape=(3,), dtype=np.float64)
-    with nogil:
-        h[0] = 0.5 * img_spacing[0]
-        h[1] = 0.5 * img_spacing[1]
-        h[2] = 0.5 * img_spacing[2]
-        for k in range(nslices):
-            for i in range(nrows):
-                for j in range(ncols):
-                    inside[k, i, j] = 1
-                    # Compute coordinates of index (k, i, j) in physical space
-                    x[0] = _apply_affine_3d_x0(k, i, j, 1, out_grid2world)
-                    x[1] = _apply_affine_3d_x1(k, i, j, 1, out_grid2world)
-                    x[2] = _apply_affine_3d_x2(k, i, j, 1, out_grid2world)
-                    dx[:] = x[:]
-                    for p in range(3):
-                        # Compute coordinates of point dx on img's grid
-                        dx[p] = x[p] - h[p]
-                        q[0] = _apply_affine_3d_x0(dx[0], dx[1], dx[2], 1,
-                                                   img_world2grid)
-                        q[1] = _apply_affine_3d_x1(dx[0], dx[1], dx[2], 1,
-                                                   img_world2grid)
-                        q[2] = _apply_affine_3d_x2(dx[0], dx[1], dx[2], 1,
-                                                   img_world2grid)
-                        # Interpolate img at q
-                        in_flag = _interpolate_scalar_3d[floating](img, q[0],
-                            q[1], q[2], &out[k, i, j, p])
-                        if in_flag == 0:
-                            out[k, i, j, p] = 0
-                            inside[k, i, j] = 0
-                            continue
-                        tmp = out[k, i, j, p]
-                        # Compute coordinates of point dx on img's grid
-                        dx[p] = x[p] + h[p]
-                        q[0] = _apply_affine_3d_x0(dx[0], dx[1], dx[2], 1,
-                                                   img_world2grid)
-                        q[1] = _apply_affine_3d_x1(dx[0], dx[1], dx[2], 1,
-                                                   img_world2grid)
-                        q[2] = _apply_affine_3d_x2(dx[0], dx[1], dx[2], 1,
-                                                   img_world2grid)
-                        # Interpolate img at q
-                        in_flag = _interpolate_scalar_3d[floating](img, q[0],
-                            q[1], q[2], &out[k, i, j, p])
-                        if in_flag == 0:
-                            out[k, i, j, p] = 0
-                            inside[k, i, j] = 0
-                            continue
-                        out[k, i, j, p] = (out[k, i, j, p] - tmp) / img_spacing[p]
-                        dx[p] = x[p]
+        int i, j, k, in_flag, p
+        double tmp, x[3], dx[3], h[3], q[3]
+
+    h[0] = 0.5 * img_spacing[0]
+    h[1] = 0.5 * img_spacing[1]
+    h[2] = 0.5 * img_spacing[2]
+    for k in range(nslices):
+        for i in range(nrows):
+            for j in range(ncols):
+                inside[k, i, j] = 1
+                # Compute coordinates of index (k, i, j) in physical space
+                x[0] = _apply_affine_3d_x0(k, i, j, 1, out_grid2world)
+                x[1] = _apply_affine_3d_x1(k, i, j, 1, out_grid2world)
+                x[2] = _apply_affine_3d_x2(k, i, j, 1, out_grid2world)
+                for p in range(3):
+                    dx[p] = x[p]
+                for p in range(3):
+                    # Compute coordinates of point dx on img's grid
+                    dx[p] = x[p] - h[p]
+                    q[0] = _apply_affine_3d_x0(dx[0], dx[1], dx[2], 1,
+                                               img_world2grid)
+                    q[1] = _apply_affine_3d_x1(dx[0], dx[1], dx[2], 1,
+                                               img_world2grid)
+                    q[2] = _apply_affine_3d_x2(dx[0], dx[1], dx[2], 1,
+                                               img_world2grid)
+                    # Interpolate img at q
+                    in_flag = _interpolate_scalar_3d[floating](img, q[0],
+                        q[1], q[2], &out[k, i, j, p])
+                    if in_flag == 0:
+                        out[k, i, j, p] = 0
+                        inside[k, i, j] = 0
+                        continue
+                    tmp = out[k, i, j, p]
+                    # Compute coordinates of point dx on img's grid
+                    dx[p] = x[p] + h[p]
+                    q[0] = _apply_affine_3d_x0(dx[0], dx[1], dx[2], 1,
+                                               img_world2grid)
+                    q[1] = _apply_affine_3d_x1(dx[0], dx[1], dx[2], 1,
+                                               img_world2grid)
+                    q[2] = _apply_affine_3d_x2(dx[0], dx[1], dx[2], 1,
+                                               img_world2grid)
+                    # Interpolate img at q
+                    in_flag = _interpolate_scalar_3d[floating](img, q[0],
+                        q[1], q[2], &out[k, i, j, p])
+                    if in_flag == 0:
+                        out[k, i, j, p] = 0
+                        inside[k, i, j] = 0
+                        continue
+                    out[k, i, j, p] = (out[k, i, j, p] - tmp) / img_spacing[p]
+                    dx[p] = x[p]
 
 
 def _sparse_gradient_3d(floating[:, :, :] img,
@@ -3437,20 +3434,21 @@ def gradient(img, img_world2grid, img_spacing, out_shape,
     ftype = img.dtype.type
     out = np.empty(tuple(out_shape)+(dim,), dtype=ftype)
     inside = np.empty(tuple(out_shape), dtype=np.int32)
-    # Select joint density gradient 2D or 3D
-    if dim == 2:
-        jd_grad = _gradient_2d
-    elif dim == 3:
-        jd_grad = _gradient_3d
-    else:
-        raise ValueError('Undefined gradient for image dimension %d' % (dim,))
     if img_world2grid.dtype != np.float64:
         img_world2grid = img_world2grid.astype(np.float64)
     if img_spacing.dtype != np.float64:
         img_spacing = img_spacing.astype(np.float64)
     if out_grid2world.dtype != np.float64:
         out_grid2world = out_grid2world.astype(np.float64)
-    jd_grad(img, img_world2grid, img_spacing, out_grid2world, out, inside)
+    # Select joint density gradient 2D or 3D
+    if dim == 2:
+        _gradient_2d[cython.double](img, img_world2grid, img_spacing,
+                                    out_grid2world, out, inside)
+    elif dim == 3:
+        _gradient_3d[cython.double](img, img_world2grid, img_spacing,
+                                    out_grid2world, out, inside)
+    else:
+        raise ValueError('Undefined gradient for image dimension %d' % (dim,))
     return np.asarray(out), np.asarray(inside)
 
 
