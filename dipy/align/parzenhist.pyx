@@ -12,6 +12,8 @@ from . import vector_fields as vf
 
 from cython.parallel import prange
 from libc.stdlib cimport abort, malloc, free
+cimport safe_openmp as openmp
+from safe_openmp cimport have_openmp
 
 from dipy.align.vector_fields cimport(_apply_affine_3d_x0,
                                       _apply_affine_3d_x1,
@@ -750,6 +752,7 @@ cdef void _compute_pdfs_dense_3d(double[:, :, :] static, double[:, :, :] moving,
         cnp.npy_intp valid_points, *valid_points_ptr
         cnp.npy_intp k, i, j
         double sum, *sum_ptr
+        openmp.omp_lock_t lock
 
     joint[...] = 0
     smarginal[:] = 0
@@ -760,11 +763,23 @@ cdef void _compute_pdfs_dense_3d(double[:, :, :] static, double[:, :, :] moving,
     if sum_ptr == NULL:
         abort()
 
+    if have_openmp:
+        openmp.omp_init_lock(&lock)
+
     for k in prange(nslices):
+        if have_openmp:
+            openmp.omp_set_lock(&lock)
+
         _compute_pdfs_dense_3d_fun(static, moving, smask, mmask, smin,
                                    sdelta, mmin, mdelta, nbins, padding,
                                    joint, smarginal, mmarginal,
                                    valid_points_ptr, sum_ptr, k)
+
+        if have_openmp:
+            openmp.omp_unset_lock(&lock)
+
+    if have_openmp:
+        openmp.omp_destroy_lock(&lock)
 
     valid_points = 0
     sum = 0
