@@ -10,6 +10,9 @@ import numpy.random as random
 from .fused_types cimport floating
 from . import vector_fields as vf
 
+from cython.parallel import prange
+from libc.stdlib cimport abort, malloc, free
+
 from dipy.align.vector_fields cimport(_apply_affine_3d_x0,
                                       _apply_affine_3d_x1,
                                       _apply_affine_3d_x2,
@@ -659,6 +662,45 @@ cdef _compute_pdfs_dense_2d(double[:, :] static, double[:, :] moving,
                     mmarginal[j] += joint[i, j]
 
 
+cdef void _compute_pdfs_dense_3d_fun(double[:, :, :] static,
+                            double[:, :, :] moving,
+                            int[:, :, :] smask, int[:, :, :] mmask,
+                            double smin, double sdelta,
+                            double mmin, double mdelta,
+                            int nbins, int padding, double[:, :] joint,
+                            double[:] smarginal, double[:] mmarginal,
+                            cnp.npy_intp *valid_points_ptr,
+                            double *sum_ptr, cnp.npy_intp k) nogil:
+    cdef:
+        cnp.npy_intp nrows = static.shape[1]
+        cnp.npy_intp ncols = static.shape[2]
+        cnp.npy_intp offset
+        cnp.npy_intp i, j, r, c
+        double rn, cn, val, spline_arg
+
+    valid_points_ptr[k] = 0
+    sum_ptr[k] = 0
+    for i in range(nrows):
+        for j in range(ncols):
+            if smask is not None and smask[k, i, j] == 0:
+                continue
+            if mmask is not None and mmask[k, i, j] == 0:
+                continue
+            valid_points_ptr[k] += 1
+            rn = _bin_normalize(static[k, i, j], smin, sdelta)
+            r = _bin_index(rn, nbins, padding)
+            cn = _bin_normalize(moving[k, i, j], mmin, mdelta)
+            c = _bin_index(cn, nbins, padding)
+            spline_arg = (c - 2) - cn
+
+            smarginal[r] += 1
+            for offset in range(-2, 3):
+                val = _cubic_spline(spline_arg)
+                joint[r, c + offset] += val
+                sum_ptr[k] += val
+                spline_arg += 1.0
+
+
 cdef void _compute_pdfs_dense_3d(double[:, :, :] static, double[:, :, :] moving,
                             int[:, :, :] smask, int[:, :, :] mmask,
                             double smin, double sdelta,
@@ -705,35 +747,33 @@ cdef void _compute_pdfs_dense_3d(double[:, :, :] static, double[:, :, :] moving,
         cnp.npy_intp nslices = static.shape[0]
         cnp.npy_intp nrows = static.shape[1]
         cnp.npy_intp ncols = static.shape[2]
-        cnp.npy_intp offset, valid_points
-        cnp.npy_intp k, i, j, r, c
-        double rn, cn
-        double val, spline_arg, sum
+        cnp.npy_intp valid_points, *valid_points_ptr
+        cnp.npy_intp k, i, j
+        double sum, *sum_ptr
 
     joint[...] = 0
     smarginal[:] = 0
+    valid_points_ptr = <cnp.npy_intp *>malloc(sizeof(cnp.npy_intp) * nslices)
+    if valid_points_ptr == NULL:
+        abort()
+    sum_ptr = <double *>malloc(sizeof(double) * nslices)
+    if sum_ptr == NULL:
+        abort()
+
+    for k in prange(nslices):
+        _compute_pdfs_dense_3d_fun(static, moving, smask, mmask, smin,
+                                   sdelta, mmin, mdelta, nbins, padding,
+                                   joint, smarginal, mmarginal,
+                                   valid_points_ptr, sum_ptr, k)
+
     valid_points = 0
     sum = 0
     for k in range(nslices):
-        for i in range(nrows):
-            for j in range(ncols):
-                if smask is not None and smask[k, i, j] == 0:
-                    continue
-                if mmask is not None and mmask[k, i, j] == 0:
-                    continue
-                valid_points += 1
-                rn = _bin_normalize(static[k, i, j], smin, sdelta)
-                r = _bin_index(rn, nbins, padding)
-                cn = _bin_normalize(moving[k, i, j], mmin, mdelta)
-                c = _bin_index(cn, nbins, padding)
-                spline_arg = (c - 2) - cn
+        valid_points += valid_points_ptr[k]
+        sum += sum_ptr[k]
 
-                smarginal[r] += 1
-                for offset in range(-2, 3):
-                    val = _cubic_spline(spline_arg)
-                    joint[r, c + offset] += val
-                    sum += val
-                    spline_arg += 1.0
+    free(valid_points_ptr)
+    free(sum_ptr)
 
     if sum > 0:
         for i in range(nbins):
