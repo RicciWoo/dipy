@@ -1091,9 +1091,10 @@ cdef void _compose_vector_fields_3d(floating[:, :, :, :] d1,
 
     for k in range(ns1):
         cnt += cnt_ptr[k]
-        maxNorm += maxNorm_ptr[k]
         meanNorm += meanNorm_ptr[k]
         stdNorm += stdNorm_ptr[k]
+        if maxNorm < maxNorm_ptr[k]:
+            maxNorm = maxNorm_ptr[k]
 
     free(cnt_ptr)
     free(maxNorm_ptr)
