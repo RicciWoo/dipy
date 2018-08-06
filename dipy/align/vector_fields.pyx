@@ -1362,6 +1362,8 @@ def invert_vector_field_fixed_point_3d(floating[:, :, :, :] d,
                                          step_factor * q[k, ii, jj, 2])
             error /= (ns * nr * nc)
             iter_count += 1
+        free(error_ptr)
+        free(difmag_ptr)
         stats[0] = error
         stats[1] = iter_count
     return np.asarray(p)
