@@ -8,6 +8,8 @@ cimport numpy as cnp
 cimport cython
 from .fused_types cimport floating, number
 
+from cython.parallel import prange
+from libc.stdlib cimport abort, malloc, free
 
 cdef extern from "dpy_math.h" nogil:
     double floor(double)
@@ -1287,11 +1289,12 @@ def invert_vector_field_fixed_point_3d(floating[:, :, :, :] d,
         cnp.npy_intp ns = d.shape[0]
         cnp.npy_intp nr = d.shape[1]
         cnp.npy_intp nc = d.shape[2]
+        cnp.npy_intp k, i, j, ii, jj
         int iter_count, current
         double dkk, dii, djj, dk, di, dj
-        double difmag, mag, maxlen, step_factor
+        double difmag, mag, maxlen, step_factor, *difmag_ptr
         double epsilon = 0.5
-        double error = 1 + tol
+        double error = 1 + tol, *error_ptr
         double ss = spacing[0], sr = spacing[1], sc = spacing[2]
 
     ftype = np.asarray(d).dtype
@@ -1309,6 +1312,13 @@ def invert_vector_field_fixed_point_3d(floating[:, :, :, :] d,
         p[...] = start
 
     with nogil:
+        error_ptr = <double *>malloc(sizeof(double) * ns)
+        if error_ptr == NULL:
+            abort()
+        difmag_ptr = <double *>malloc(sizeof(double) * ns)
+        if difmag_ptr == NULL:
+            abort()
+
         iter_count = 0
         difmag = 1
         while (0.1 < difmag) and (iter_count < max_iter) and (tol < error):
@@ -1320,30 +1330,36 @@ def invert_vector_field_fixed_point_3d(floating[:, :, :, :] d,
                                                 1.0, q, substats)
             difmag = 0
             error = 0
-            for k in range(ns):
+            for k in prange(ns):
+                error_ptr[k] = 0
+                difmag_ptr[k] = 0
                 for i in range(nr):
                     for j in range(nc):
                         mag = sqrt((q[k, i, j, 0]/ss) ** 2 +
                                    (q[k, i, j, 1]/sr) ** 2 +
                                    (q[k, i, j, 2]/sc) ** 2)
                         norms[k, i, j] = mag
-                        error += mag
-                        if(difmag < mag):
-                            difmag = mag
-            maxlen = difmag*epsilon
+                        error_ptr[k] += mag
+                        if(difmag_ptr[k] < mag):
+                            difmag_ptr[k] = mag
             for k in range(ns):
-                for i in range(nr):
-                    for j in range(nc):
-                        if norms[k, i, j] > maxlen:
-                            step_factor = epsilon * maxlen / norms[k, i, j]
+                error += error_ptr[k]
+                if difmag < difmag_ptr[k]:
+                    difmag = difmag_ptr[k]
+            maxlen = difmag*epsilon
+            for k in prange(ns):
+                for ii in range(nr):
+                    for jj in range(nc):
+                        if norms[k, ii, jj] > maxlen:
+                            step_factor = epsilon * maxlen / norms[k, ii, jj]
                         else:
                             step_factor = epsilon
-                        p[k, i, j, 0] = (p[k, i, j, 0] -
-                                         step_factor * q[k, i, j, 0])
-                        p[k, i, j, 1] = (p[k, i, j, 1] -
-                                         step_factor * q[k, i, j, 1])
-                        p[k, i, j, 2] = (p[k, i, j, 2] -
-                                         step_factor * q[k, i, j, 2])
+                        p[k, ii, jj, 0] = (p[k, ii, jj, 0] -
+                                         step_factor * q[k, ii, jj, 0])
+                        p[k, ii, jj, 1] = (p[k, ii, jj, 1] -
+                                         step_factor * q[k, ii, jj, 1])
+                        p[k, ii, jj, 2] = (p[k, ii, jj, 2] -
+                                         step_factor * q[k, ii, jj, 2])
             error /= (ns * nr * nc)
             iter_count += 1
         stats[0] = error
