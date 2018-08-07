@@ -1373,7 +1373,7 @@ def invert_vector_field_fixed_point_3d(floating[:, :, :, :] d,
         stats[1] = iter_count
 
     stop = time(NULL)
-    printf("%f\n", difftime(stop, begin))
+    printf("%ld, %ld\n", begin, stop)
 
     return np.asarray(p)
 
