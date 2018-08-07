@@ -8,6 +8,7 @@ cimport numpy as cnp
 cimport cython
 from .fused_types cimport floating, number
 
+from cython.parallel import prange
 
 cdef extern from "dpy_math.h" nogil:
     double floor(double)
