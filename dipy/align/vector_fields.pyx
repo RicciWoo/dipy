@@ -10,8 +10,7 @@ from .fused_types cimport floating, number
 
 from cython.parallel import prange
 from libc.stdlib cimport abort, malloc, free
-# from libc.time cimport time_t, time, difftime
-# from libc.stdio cimport printf
+import timeit
 
 cdef extern from "dpy_math.h" nogil:
     double floor(double)
@@ -1298,7 +1297,6 @@ def invert_vector_field_fixed_point_3d(floating[:, :, :, :] d,
         double epsilon = 0.5
         double error = 1 + tol, *error_ptr
         double ss = spacing[0], sr = spacing[1], sc = spacing[2]
-        # time_t begin, stop
 
     ftype = np.asarray(d).dtype
     cdef:
@@ -1311,7 +1309,7 @@ def invert_vector_field_fixed_point_3d(floating[:, :, :, :] d,
     if not is_valid_affine(d_world2grid, 3):
         raise ValueError("Invalid world-to-image transform")
 
-    # begin = time(NULL)
+    begin = timeit.default_timer()
 
     if start is not None:
         p[...] = start
@@ -1372,8 +1370,8 @@ def invert_vector_field_fixed_point_3d(floating[:, :, :, :] d,
         stats[0] = error
         stats[1] = iter_count
 
-    # stop = time(NULL)
-    # printf("%ld, %ld\n", begin, stop)
+    stop = timeit.default_timer()
+    print(stop - begin)
 
     return np.asarray(p)
 
