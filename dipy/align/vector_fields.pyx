@@ -1298,7 +1298,7 @@ def invert_vector_field_fixed_point_3d(floating[:, :, :, :] d,
         double epsilon = 0.5
         double error = 1 + tol, *error_ptr
         double ss = spacing[0], sr = spacing[1], sc = spacing[2]
-        time_t start, stop
+        time_t begin, stop
 
     ftype = np.asarray(d).dtype
     cdef:
@@ -1311,7 +1311,7 @@ def invert_vector_field_fixed_point_3d(floating[:, :, :, :] d,
     if not is_valid_affine(d_world2grid, 3):
         raise ValueError("Invalid world-to-image transform")
 
-    start = time(NULL)
+    begin = time(NULL)
 
     if start is not None:
         p[...] = start
@@ -1373,7 +1373,7 @@ def invert_vector_field_fixed_point_3d(floating[:, :, :, :] d,
         stats[1] = iter_count
 
     stop = time(NULL)
-    printf("%f\n", difftime(stop, start))
+    printf("%f\n", difftime(stop, begin))
 
     return np.asarray(p)
 
