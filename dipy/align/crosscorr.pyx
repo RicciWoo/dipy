@@ -5,6 +5,9 @@ from fused_types cimport floating
 cimport cython
 cimport numpy as cnp
 
+from cython.parallel import prange
+cimport safe_openmp as openmp
+from safe_openmp cimport have_openmp
 
 cdef inline int _int_max(int a, int b) nogil:
     r"""
@@ -128,6 +131,126 @@ cdef inline void _update_factors(double[:, :, :, :] factors,
 @cython.boundscheck(False)
 @cython.wraparound(False)
 @cython.cdivision(True)
+cdef void _precompute_cc_factors_3d_fun(floating[:, :, :] static,
+                                        floating[:, :, :] moving,
+                                        cnp.npy_intp radius,
+                                        cnp.npy_intp s, cnp.npy_intp sss,
+                                        double[:, :, :, :] temp,
+                                        floating[:, :, :, :] factors) nogil:
+    cdef:
+        cnp.npy_intp ns = static.shape[0]
+        cnp.npy_intp nr = static.shape[1]
+        cnp.npy_intp nc = static.shape[2]
+        cnp.npy_intp side = 2 * radius + 1
+        cnp.npy_intp firstc, lastc, firstr, lastr, firsts, lasts
+        cnp.npy_intp r, c, it, sides, sider, sidec
+        double cnt
+        cnp.npy_intp ssss, ss, rr, cc, prev_ss, prev_rr, prev_cc
+        double Imean, Jmean, IJprods, Isq, Jsq
+
+    ss = _wrap(s - radius, ns)
+    firsts = _int_max(0, ss - radius)
+    lasts = _int_min(ns - 1, ss + radius)
+    sides = (lasts - firsts + 1)
+    for r in range(nr+radius):
+        rr = _wrap(r - radius, nr)
+        firstr = _int_max(0, rr - radius)
+        lastr = _int_min(nr - 1, rr + radius)
+        sider = (lastr - firstr + 1)
+        for c in range(nc+radius):
+            cc = _wrap(c - radius, nc)
+            # New corner
+            _update_factors(temp, moving, static,
+                            sss, rr, cc, s, r, c, 0)
+
+            # Add signed sub-volumes
+            if s > 0:
+                prev_ss = 1 - sss
+                for it in range(5):
+                    temp[sss, rr, cc, it] += temp[prev_ss, rr, cc, it]
+                if r > 0:
+                    prev_rr = _wrap(rr-1, nr)
+                    for it in range(5):
+                        temp[sss, rr, cc, it] -= \
+                            temp[prev_ss, prev_rr, cc, it]
+                    if c > 0:
+                        prev_cc = _wrap(cc-1, nc)
+                        for it in range(5):
+                            temp[sss, rr, cc, it] += \
+                                temp[prev_ss, prev_rr, prev_cc, it]
+                if c > 0:
+                    prev_cc = _wrap(cc-1, nc)
+                    for it in range(5):
+                        temp[sss, rr, cc, it] -= \
+                            temp[prev_ss, rr, prev_cc, it]
+            if(r > 0):
+                prev_rr = _wrap(rr-1, nr)
+                for it in range(5):
+                    temp[sss, rr, cc, it] += \
+                        temp[sss, prev_rr, cc, it]
+                if(c > 0):
+                    prev_cc = _wrap(cc-1, nc)
+                    for it in range(5):
+                        temp[sss, rr, cc, it] -= \
+                            temp[sss, prev_rr, prev_cc, it]
+            if(c > 0):
+                prev_cc = _wrap(cc-1, nc)
+                for it in range(5):
+                    temp[sss, rr, cc, it] += temp[sss, rr, prev_cc, it]
+
+            # Add signed corners
+            if s >= side:
+                _update_factors(temp, moving, static,
+                                sss, rr, cc, s-side, r, c, -1)
+                if r >= side:
+                    _update_factors(temp, moving, static,
+                                    sss, rr, cc, s-side, r-side, c, 1)
+                    if c >= side:
+                        _update_factors(temp, moving, static, sss, rr,
+                                        cc, s-side, r-side, c-side, -1)
+                if c >= side:
+                    _update_factors(temp, moving, static,
+                                    sss, rr, cc, s-side, r, c-side, 1)
+            if r >= side:
+                _update_factors(temp, moving, static,
+                                sss, rr, cc, s, r-side, c, -1)
+                if c >= side:
+                    _update_factors(temp, moving, static,
+                                    sss, rr, cc, s, r-side, c-side, 1)
+
+            if c >= side:
+                _update_factors(temp, moving, static,
+                                sss, rr, cc, s, r, c-side, -1)
+            # Compute final factors
+            if s >= radius and r >= radius and c >= radius:
+                firstc = _int_max(0, cc - radius)
+                lastc = _int_min(nc - 1, cc + radius)
+                sidec = (lastc - firstc + 1)
+                cnt = sides*sider*sidec
+                Imean = temp[sss, rr, cc, SI] / cnt
+                Jmean = temp[sss, rr, cc, SJ] / cnt
+                IJprods = (temp[sss, rr, cc, SIJ] -
+                           Jmean * temp[sss, rr, cc, SI] -
+                           Imean * temp[sss, rr, cc, SJ] +
+                           cnt * Jmean * Imean)
+                Isq = (temp[sss, rr, cc, SI2] -
+                       Imean * temp[sss, rr, cc, SI] -
+                       Imean * temp[sss, rr, cc, SI] +
+                       cnt * Imean * Imean)
+                Jsq = (temp[sss, rr, cc, SJ2] -
+                       Jmean * temp[sss, rr, cc, SJ] -
+                       Jmean * temp[sss, rr, cc, SJ] +
+                       cnt * Jmean * Jmean)
+                factors[ss, rr, cc, 0] = static[ss, rr, cc] - Imean
+                factors[ss, rr, cc, 1] = moving[ss, rr, cc] - Jmean
+                factors[ss, rr, cc, 2] = IJprods
+                factors[ss, rr, cc, 3] = Isq
+                factors[ss, rr, cc, 4] = Jsq
+
+
+@cython.boundscheck(False)
+@cython.wraparound(False)
+@cython.cdivision(True)
 def precompute_cc_factors_3d(floating[:, :, :] static,
                              floating[:, :, :] moving,
                              cnp.npy_intp radius, num_threads=None):
@@ -175,118 +298,32 @@ def precompute_cc_factors_3d(floating[:, :, :] static,
         cnp.npy_intp ns = static.shape[0]
         cnp.npy_intp nr = static.shape[1]
         cnp.npy_intp nc = static.shape[2]
-        cnp.npy_intp side = 2 * radius + 1
-        cnp.npy_intp firstc, lastc, firstr, lastr, firsts, lasts
-        cnp.npy_intp s, r, c, it, sides, sider, sidec
-        double cnt
-        cnp.npy_intp ssss, sss, ss, rr, cc, prev_ss, prev_rr, prev_cc
-        double Imean, Jmean, IJprods, Isq, Jsq
+        cnp.npy_intp s, sss, *sss_ptr = &sss, sss_loc
         double[:, :, :, :] temp = np.zeros((2, nr, nc, 5), dtype=np.float64)
         floating[:, :, :, :] factors = np.zeros((ns, nr, nc, 5),
                                                 dtype=np.asarray(static).dtype)
+        openmp.omp_lock_t lock
 
     with nogil:
+        if have_openmp:
+            openmp.omp_init_lock(&lock)
+
         sss = 1
-        for s in range(ns+radius):
-            ss = _wrap(s - radius, ns)
-            sss = 1 - sss
-            firsts = _int_max(0, ss - radius)
-            lasts = _int_min(ns - 1, ss + radius)
-            sides = (lasts - firsts + 1)
-            for r in range(nr+radius):
-                rr = _wrap(r - radius, nr)
-                firstr = _int_max(0, rr - radius)
-                lastr = _int_min(nr - 1, rr + radius)
-                sider = (lastr - firstr + 1)
-                for c in range(nc+radius):
-                    cc = _wrap(c - radius, nc)
-                    # New corner
-                    _update_factors(temp, moving, static,
-                                    sss, rr, cc, s, r, c, 0)
+        for s in prange(ns+radius):
+            if have_openmp:
+                openmp.omp_set_lock(&lock)
 
-                    # Add signed sub-volumes
-                    if s > 0:
-                        prev_ss = 1 - sss
-                        for it in range(5):
-                            temp[sss, rr, cc, it] += temp[prev_ss, rr, cc, it]
-                        if r > 0:
-                            prev_rr = _wrap(rr-1, nr)
-                            for it in range(5):
-                                temp[sss, rr, cc, it] -= \
-                                    temp[prev_ss, prev_rr, cc, it]
-                            if c > 0:
-                                prev_cc = _wrap(cc-1, nc)
-                                for it in range(5):
-                                    temp[sss, rr, cc, it] += \
-                                        temp[prev_ss, prev_rr, prev_cc, it]
-                        if c > 0:
-                            prev_cc = _wrap(cc-1, nc)
-                            for it in range(5):
-                                temp[sss, rr, cc, it] -= \
-                                    temp[prev_ss, rr, prev_cc, it]
-                    if(r > 0):
-                        prev_rr = _wrap(rr-1, nr)
-                        for it in range(5):
-                            temp[sss, rr, cc, it] += \
-                                temp[sss, prev_rr, cc, it]
-                        if(c > 0):
-                            prev_cc = _wrap(cc-1, nc)
-                            for it in range(5):
-                                temp[sss, rr, cc, it] -= \
-                                    temp[sss, prev_rr, prev_cc, it]
-                    if(c > 0):
-                        prev_cc = _wrap(cc-1, nc)
-                        for it in range(5):
-                            temp[sss, rr, cc, it] += temp[sss, rr, prev_cc, it]
+            sss_loc = sss_ptr[0]
+            sss_ptr[0] = 1 - sss_ptr[0]
+            _precompute_cc_factors_3d_fun(static, moving, radius,
+                                          s, sss_loc, temp, factors)
 
-                    # Add signed corners
-                    if s >= side:
-                        _update_factors(temp, moving, static,
-                                        sss, rr, cc, s-side, r, c, -1)
-                        if r >= side:
-                            _update_factors(temp, moving, static,
-                                            sss, rr, cc, s-side, r-side, c, 1)
-                            if c >= side:
-                                _update_factors(temp, moving, static, sss, rr,
-                                                cc, s-side, r-side, c-side, -1)
-                        if c >= side:
-                            _update_factors(temp, moving, static,
-                                            sss, rr, cc, s-side, r, c-side, 1)
-                    if r >= side:
-                        _update_factors(temp, moving, static,
-                                        sss, rr, cc, s, r-side, c, -1)
-                        if c >= side:
-                            _update_factors(temp, moving, static,
-                                            sss, rr, cc, s, r-side, c-side, 1)
+            if have_openmp:
+                openmp.omp_unset_lock(&lock)
 
-                    if c >= side:
-                        _update_factors(temp, moving, static,
-                                        sss, rr, cc, s, r, c-side, -1)
-                    # Compute final factors
-                    if s >= radius and r >= radius and c >= radius:
-                        firstc = _int_max(0, cc - radius)
-                        lastc = _int_min(nc - 1, cc + radius)
-                        sidec = (lastc - firstc + 1)
-                        cnt = sides*sider*sidec
-                        Imean = temp[sss, rr, cc, SI] / cnt
-                        Jmean = temp[sss, rr, cc, SJ] / cnt
-                        IJprods = (temp[sss, rr, cc, SIJ] -
-                                   Jmean * temp[sss, rr, cc, SI] -
-                                   Imean * temp[sss, rr, cc, SJ] +
-                                   cnt * Jmean * Imean)
-                        Isq = (temp[sss, rr, cc, SI2] -
-                               Imean * temp[sss, rr, cc, SI] -
-                               Imean * temp[sss, rr, cc, SI] +
-                               cnt * Imean * Imean)
-                        Jsq = (temp[sss, rr, cc, SJ2] -
-                               Jmean * temp[sss, rr, cc, SJ] -
-                               Jmean * temp[sss, rr, cc, SJ] +
-                               cnt * Jmean * Jmean)
-                        factors[ss, rr, cc, 0] = static[ss, rr, cc] - Imean
-                        factors[ss, rr, cc, 1] = moving[ss, rr, cc] - Jmean
-                        factors[ss, rr, cc, 2] = IJprods
-                        factors[ss, rr, cc, 3] = Isq
-                        factors[ss, rr, cc, 4] = Jsq
+        if have_openmp:
+            openmp.omp_destroy_lock(&lock)
+
     return factors
 
 
