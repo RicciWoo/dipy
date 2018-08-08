@@ -8,6 +8,7 @@ cimport numpy as cnp
 cimport cython
 from .fused_types cimport floating, number
 
+from cython.parallel import prange
 
 cdef extern from "dpy_math.h" nogil:
     double floor(double)
@@ -1672,7 +1673,7 @@ def reorient_vector_field_3d(floating[:, :, :, :] d,
         return
 
     with nogil:
-        for k in range(nslices):
+        for k in prange(nslices):
             for i in range(nrows):
                 for j in range(ncols):
                     dk = d[k, i, j, 0]
