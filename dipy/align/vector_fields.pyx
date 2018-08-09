@@ -10,6 +10,8 @@ from .fused_types cimport floating, number
 
 from cython.parallel import prange
 from libc.stdlib cimport abort, malloc, free
+from posix.time cimport clock_gettime, timespec, CLOCK_REALTIME
+from libc.stdio cimport printf
 
 cdef extern from "dpy_math.h" nogil:
     double floor(double)
@@ -1296,6 +1298,10 @@ def invert_vector_field_fixed_point_3d(floating[:, :, :, :] d,
         double epsilon = 0.5
         double error = 1 + tol, *error_ptr
         double ss = spacing[0], sr = spacing[1], sc = spacing[2]
+        timespec start_t, stop_t
+        double total_t
+
+    clock_gettime(CLOCK_REALTIME, &start_t)
 
     ftype = np.asarray(d).dtype
     cdef:
@@ -1366,6 +1372,11 @@ def invert_vector_field_fixed_point_3d(floating[:, :, :, :] d,
         free(difmag_ptr)
         stats[0] = error
         stats[1] = iter_count
+
+    clock_gettime(CLOCK_REALTIME, &stop_t)
+    total_t = (stop_t.tv_sec - start_t.tv_sec) + (stop_t.tv_nsec - start_t.tv_nsec) / 1000000000.0
+    printf("%.9f\n", total_t)
+
     return np.asarray(p)
 
 
