@@ -5,6 +5,9 @@ from fused_types cimport floating
 cimport cython
 cimport numpy as cnp
 
+from cython.parallel import prange
+cimport safe_openmp as openmp
+from safe_openmp cimport have_openmp
 
 cdef inline int _int_max(int a, int b) nogil:
     r"""
@@ -352,6 +355,40 @@ def precompute_cc_factors_3d_test(floating[:, :, :] static,
 @cython.boundscheck(False)
 @cython.wraparound(False)
 @cython.cdivision(True)
+cdef _compute_cc_forward_step_3d_fun(floating[:, :, :, :] grad_static,
+                                     floating[:, :, :, :] factors,
+                                     cnp.npy_intp radius, cnp.npy_intp s,
+                                     double *energy_ptr,
+                                     floating[:, :, :, :] out) nogil:
+    cdef:
+        cnp.npy_intp nr = grad_static.shape[1]
+        cnp.npy_intp nc = grad_static.shape[2]
+        cnp.npy_intp r, c
+        double Ii, Ji, sfm, sff, smm, localCorrelation, temp
+
+    for r in range(radius, nr-radius):
+        for c in range(radius, nc-radius):
+            Ii = factors[s, r, c, 0]
+            Ji = factors[s, r, c, 1]
+            sfm = factors[s, r, c, 2]
+            sff = factors[s, r, c, 3]
+            smm = factors[s, r, c, 4]
+            if(sff == 0.0 or smm == 0.0):
+                continue
+            localCorrelation = 0
+            if(sff * smm > 1e-5):
+                localCorrelation = sfm * sfm / (sff * smm)
+            if(localCorrelation < 1):  # avoid bad values...
+                energy_ptr[0] = energy_ptr[0] - localCorrelation
+            temp = 2.0 * sfm / (sff * smm) * (Ji - sfm / sff * Ii)
+            out[s, r, c, 0] -= temp * grad_static[s, r, c, 0]
+            out[s, r, c, 1] -= temp * grad_static[s, r, c, 1]
+            out[s, r, c, 2] -= temp * grad_static[s, r, c, 2]
+
+
+@cython.boundscheck(False)
+@cython.wraparound(False)
+@cython.cdivision(True)
 def compute_cc_forward_step_3d(floating[:, :, :, :] grad_static,
                                floating[:, :, :, :] factors,
                                cnp.npy_intp radius):
@@ -393,31 +430,29 @@ def compute_cc_forward_step_3d(floating[:, :, :, :] grad_static,
         cnp.npy_intp ns = grad_static.shape[0]
         cnp.npy_intp nr = grad_static.shape[1]
         cnp.npy_intp nc = grad_static.shape[2]
-        double energy = 0
-        cnp.npy_intp s, r, c
-        double Ii, Ji, sfm, sff, smm, localCorrelation, temp
+        double energy = 0, *energy_ptr = &energy
+        cnp.npy_intp s
         floating[:, :, :, :] out =\
             np.zeros((ns, nr, nc, 3), dtype=np.asarray(grad_static).dtype)
+        opemmp.omp_lock_t lock
+
     with nogil:
-        for s in range(radius, ns-radius):
-            for r in range(radius, nr-radius):
-                for c in range(radius, nc-radius):
-                    Ii = factors[s, r, c, 0]
-                    Ji = factors[s, r, c, 1]
-                    sfm = factors[s, r, c, 2]
-                    sff = factors[s, r, c, 3]
-                    smm = factors[s, r, c, 4]
-                    if(sff == 0.0 or smm == 0.0):
-                        continue
-                    localCorrelation = 0
-                    if(sff * smm > 1e-5):
-                        localCorrelation = sfm * sfm / (sff * smm)
-                    if(localCorrelation < 1):  # avoid bad values...
-                        energy -= localCorrelation
-                    temp = 2.0 * sfm / (sff * smm) * (Ji - sfm / sff * Ii)
-                    out[s, r, c, 0] -= temp * grad_static[s, r, c, 0]
-                    out[s, r, c, 1] -= temp * grad_static[s, r, c, 1]
-                    out[s, r, c, 2] -= temp * grad_static[s, r, c, 2]
+        if have_openmp:
+            openmp.omp_init_lock(&lock)
+
+        for s in prange(radius, ns-radius):
+            if have_openmp:
+                openmp.omp_set_lock(&lock)
+
+            _compute_cc_forward_step_3d_fun(grad_static, factors, radius,
+                                            s, energy_ptr, out)
+
+            if have_openmp:
+                openmp.omp_unset_lock(&lock)
+
+        if have_openmp:
+            openmp.omp_destroy_lock(&lock)
+
     return np.asarray(out), energy
 
 
