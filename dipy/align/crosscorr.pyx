@@ -7,6 +7,8 @@ cimport numpy as cnp
 
 from cython.parallel import prange
 from libc.stdlib cimport abort, malloc, free
+from posix.time cimport clock_gettime, timespec, CLOCK_REALTIME
+from libc.stdio cimport printf
 
 cdef inline int _int_max(int a, int b) nogil:
     r"""
@@ -506,6 +508,10 @@ def compute_cc_backward_step_3d(floating[:, :, :, :] grad_moving,
         cnp.npy_intp s
         double energy = 0, *localCorrelation_ptr
         floating[:, :, :, :] out = np.zeros((ns, nr, nc, 3), dtype=ftype)
+        timespec start_t, stop_t
+        double total_t
+
+    clock_gettime(CLOCK_REALTIME, &start_t)
 
     localCorrelation_ptr = <double *>malloc(sizeof(double) * ns)
     if localCorrelation_ptr == NULL:
@@ -520,6 +526,10 @@ def compute_cc_backward_step_3d(floating[:, :, :, :] grad_moving,
             energy -= localCorrelation_ptr[s]
 
     free(localCorrelation_ptr)
+
+    clock_gettime(CLOCK_REALTIME, &stop_t)
+    total_t = (stop_t.tv_sec - start_t.tv_sec) + (stop_t.tv_nsec - start_t.tv_nsec) / 1000000000.0
+    printf("%.9f\n", total_t)
 
     return np.asarray(out), energy
 
