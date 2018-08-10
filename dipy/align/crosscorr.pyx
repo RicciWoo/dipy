@@ -355,11 +355,11 @@ def precompute_cc_factors_3d_test(floating[:, :, :] static,
 @cython.boundscheck(False)
 @cython.wraparound(False)
 @cython.cdivision(True)
-cdef _compute_cc_forward_step_3d_fun(floating[:, :, :, :] grad_static,
-                                     floating[:, :, :, :] factors,
-                                     cnp.npy_intp radius, cnp.npy_intp s,
-                                     double *energy_ptr,
-                                     floating[:, :, :, :] out) nogil:
+cdef void _compute_cc_forward_step_3d_fun(floating[:, :, :, :] grad_static,
+                                          floating[:, :, :, :] factors,
+                                          cnp.npy_intp radius, cnp.npy_intp s,
+                                          double *energy_ptr,
+                                          floating[:, :, :, :] out) nogil:
     cdef:
         cnp.npy_intp nr = grad_static.shape[1]
         cnp.npy_intp nc = grad_static.shape[2]
