@@ -6,8 +6,7 @@ cimport cython
 cimport numpy as cnp
 
 from cython.parallel import prange
-cimport safe_openmp as openmp
-from safe_openmp cimport have_openmp
+from libc.stdlib cimport abort, malloc, free
 
 cdef inline int _int_max(int a, int b) nogil:
     r"""
@@ -430,7 +429,7 @@ def compute_cc_forward_step_3d(floating[:, :, :, :] grad_static,
 cdef void _compute_cc_backward_step_3d_fun(floating[:, :, :, :] grad_moving,
                                            floating[:, :, :, :] factors,
                                            cnp.npy_intp radius, cnp.npy_intp s,
-                                           double *energy_ptr,
+                                           double *localCorrelation_ptr,
                                            floating[:, :, :, :] out) nogil:
     cdef:
         cnp.npy_intp nr = grad_moving.shape[1]
@@ -438,6 +437,7 @@ cdef void _compute_cc_backward_step_3d_fun(floating[:, :, :, :] grad_moving,
         cnp.npy_intp r, c
         double Ii, Ji, sfm, sff, smm, localCorrelation, temp
 
+    localCorrelation_ptr[s] = 0
     for r in range(radius, nr-radius):
         for c in range(radius, nc-radius):
             Ii = factors[s, r, c, 0]
@@ -451,7 +451,7 @@ cdef void _compute_cc_backward_step_3d_fun(floating[:, :, :, :] grad_moving,
             if(sff * smm > 1e-5):
                 localCorrelation = sfm * sfm / (sff * smm)
             if(localCorrelation < 1):  # avoid bad values...
-                energy_ptr[0] = energy_ptr[0] - localCorrelation
+                localCorrelation_ptr[s] = localCorrelation
             temp = 2.0 * sfm / (sff * smm) * (Ii - sfm / smm * Ji)
             out[s, r, c, 0] -= temp * grad_moving[s, r, c, 0]
             out[s, r, c, 1] -= temp * grad_moving[s, r, c, 1]
@@ -504,26 +504,22 @@ def compute_cc_backward_step_3d(floating[:, :, :, :] grad_moving,
         cnp.npy_intp nr = grad_moving.shape[1]
         cnp.npy_intp nc = grad_moving.shape[2]
         cnp.npy_intp s
-        double energy = 0, *energy_ptr = &energy
+        double energy = 0, *localCorrelation_ptr
         floating[:, :, :, :] out = np.zeros((ns, nr, nc, 3), dtype=ftype)
-        openmp.omp_lock_t lock
+
+    localCorrelation_ptr = <double *>malloc(sizeof(double) * ns)
+    if localCorrelation_ptr == NULL:
+        abort()
 
     with nogil:
-        if have_openmp:
-            openmp.omp_init_lock(&lock)
-
         for s in prange(radius, ns-radius):
-            if have_openmp:
-                openmp.omp_set_lock(&lock)
-
             _compute_cc_backward_step_3d_fun(grad_moving, factors, radius,
-                                             s, energy_ptr, out)
+                                             s, localCorrelation_ptr, out)
 
-            if have_openmp:
-                openmp.omp_unset_lock(&lock)
+        for s in range(radius, ns-radius):
+            energy -= localCorrelation_ptr[s]
 
-        if have_openmp:
-            openmp.omp_destroy_lock(&lock)
+    free(localCorrelation_ptr)
 
     return np.asarray(out), energy
 
