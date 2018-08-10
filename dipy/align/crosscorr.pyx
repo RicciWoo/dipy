@@ -434,7 +434,7 @@ def compute_cc_forward_step_3d(floating[:, :, :, :] grad_static,
         cnp.npy_intp s
         floating[:, :, :, :] out =\
             np.zeros((ns, nr, nc, 3), dtype=np.asarray(grad_static).dtype)
-        opemmp.omp_lock_t lock
+        openmp.omp_lock_t lock
 
     with nogil:
         if have_openmp:
