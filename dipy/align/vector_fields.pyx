@@ -2077,7 +2077,7 @@ cdef void _warp_3d_nn_fun(number[:, :, :] volume, floating[:, :, :, :] d1,
         cnp.npy_intp i, j
         int inside
         double dkk, dii, djj, dk, di, dj
-        floating[:] tmp[3]
+        floating tmp[3]
 
     for i in range(nrows):
         for j in range(ncols):
