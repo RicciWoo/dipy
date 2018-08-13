@@ -1,3 +1,5 @@
+#cython: profile=True
+
 """ Utility functions used by the Cross Correlation (CC) metric """
 
 import numpy as np
