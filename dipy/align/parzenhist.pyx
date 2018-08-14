@@ -827,7 +827,7 @@ cdef _compute_pdfs_sparse(double[:] sval, double[:] mval, double smin,
                     mmarginal[j] += joint[i, j]
 
 
-cdef _joint_pdf_gradient_dense_2d(double[:] theta, Transform transform,
+cdef void _joint_pdf_gradient_dense_2d(double[:] theta, Transform transform,
                                   double[:, :] static, double[:, :] moving,
                                   double[:, :] grid2world,
                                   floating[:, :, :] mgradient, int[:, :] smask,
@@ -934,7 +934,7 @@ cdef _joint_pdf_gradient_dense_2d(double[:] theta, Transform transform,
                         grad_pdf[i, j, k] /= norm_factor
 
 
-cdef _joint_pdf_gradient_dense_3d(double[:] theta, Transform transform,
+cdef void _joint_pdf_gradient_dense_3d(double[:] theta, Transform transform,
                                   double[:, :, :] static,
                                   double[:, :, :] moving,
                                   double[:, :] grid2world,
@@ -1047,7 +1047,7 @@ cdef _joint_pdf_gradient_dense_3d(double[:] theta, Transform transform,
                         grad_pdf[i, j, k] /= norm_factor
 
 
-cdef _joint_pdf_gradient_sparse_2d(double[:] theta, Transform transform,
+cdef viod _joint_pdf_gradient_sparse_2d(double[:] theta, Transform transform,
                                    double[:] sval, double[:] mval,
                                    double[:, :] sample_points,
                                    floating[:, :] mgradient, double smin,
@@ -1137,7 +1137,7 @@ cdef _joint_pdf_gradient_sparse_2d(double[:] theta, Transform transform,
                         grad_pdf[i, j, k] /= norm_factor
 
 
-cdef _joint_pdf_gradient_sparse_3d(double[:] theta, Transform transform,
+cdef void _joint_pdf_gradient_sparse_3d(double[:] theta, Transform transform,
                                    double[:] sval, double[:] mval,
                                    double[:, :] sample_points,
                                    floating[:, :] mgradient, double smin,
