@@ -31,6 +31,12 @@ if force_setuptools:
 from distutils.core import setup
 from distutils.extension import Extension
 
+from Cython.Compiler.Options import get_directive_defaults
+
+directive_defaults = get_directive_defaults()
+directive_defaults['linetrace'] = True
+directive_defaults['binding'] = True
+
 from cythexts import cyproc_exts, get_pyx_sdist
 from setup_helpers import (install_scripts_bat, add_flag_checking,
                            SetupDependency, read_vars_from,
@@ -104,7 +110,7 @@ for modulename, other_sources, language in (
         ('dipy.utils.fast_numpy', [], 'c')):
     pyx_src = pjoin(*modulename.split('.')) + '.pyx'
     EXTS.append(Extension(modulename, [pyx_src] + other_sources,
-                          language=language,
+                          language=language, define_macros=[('CYTHON_TRACE_NOGIL', '1')]
                           **deepcopy(ext_kwargs)))  # deepcopy lists
 
 # Do our own build and install time dependency checking. setup.py gets called in
