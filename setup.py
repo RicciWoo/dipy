@@ -110,7 +110,7 @@ for modulename, other_sources, language in (
         ('dipy.utils.fast_numpy', [], 'c')):
     pyx_src = pjoin(*modulename.split('.')) + '.pyx'
     EXTS.append(Extension(modulename, [pyx_src] + other_sources,
-                          language=language, define_macros=[('CYTHON_TRACE_NOGIL', '1')]
+                          language=language, define_macros=[('CYTHON_TRACE_NOGIL', '1')],
                           **deepcopy(ext_kwargs)))  # deepcopy lists
 
 # Do our own build and install time dependency checking. setup.py gets called in
