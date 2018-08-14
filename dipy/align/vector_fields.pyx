@@ -1211,8 +1211,9 @@ def invert_vector_field_fixed_point_2d(floating[:, :, :] d,
                 epsilon = 0.75
             else:
                 epsilon = 0.5
-            _compose_vector_fields_2d[floating](p, d, None, d_world2grid,
-                                                1.0, q, substats)
+            with gil:
+                _compose_vector_fields_2d[floating](p, d, None, d_world2grid,
+                                                    1.0, q, substats)
             difmag = 0
             error = 0
             for i in range(nr):
@@ -1317,8 +1318,9 @@ def invert_vector_field_fixed_point_3d(floating[:, :, :, :] d,
                 epsilon = 0.75
             else:
                 epsilon = 0.5
-            _compose_vector_fields_3d[floating](p, d, None, d_world2grid,
-                                                1.0, q, substats)
+            with gil:
+                _compose_vector_fields_3d[floating](p, d, None, d_world2grid,
+                                                    1.0, q, substats)
             difmag = 0
             error = 0
             for k in range(ns):
