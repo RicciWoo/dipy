@@ -3,8 +3,6 @@
 #cython: wraparound=False
 #cython: cdivision=True
 #cython: profile=True
-#cython: linetrace=True
-#cython: binding=True
 
 import numpy as np
 cimport numpy as cnp
